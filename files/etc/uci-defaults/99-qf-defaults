@@ -183,7 +183,7 @@ for svc in zerotier tailscale tailscaled easytier openvpn openvpn_client adblock
 	fi
 done
 
-# 15. TTYD 网页终端免密直连（/bin/login -f root + root 空密码）
+# 15. TTYD 网页终端免密直连（/bin/login -f root 已登录 root shell）
 if [ -f /etc/config/ttyd ]; then
 	uci -q set ttyd.@ttyd[0].command='/bin/login -f root'
 	uci -q commit ttyd
@@ -191,9 +191,11 @@ fi
 uci -q set dropbear.@dropbear[0].PasswordAuth='on'
 uci -q set dropbear.@dropbear[0].RootPasswordAuth='on'
 uci -q commit dropbear
-passwd -d root 2>/dev/null || true
+# 16. root 密码统一为 password：与现网 QWRT 一致，换固件后原有 ssh/sshpass 习惯与脚本无需改动
+#     （仅 LAN 内可达；如需改密请登录 LuCI 或 passwd 命令）
+printf 'root:password\n' | chpasswd 2>/dev/null || passwd -d root 2>/dev/null || true
 
-# 16. 软件源纯化（去重 + 剔除失效分类源，消除 apk 报错与警告）
+# 17. 软件源纯化（去重 + 剔除失效分类源，消除 apk 报错与警告）
 [ -x /usr/bin/qf-fix-apk-repos ] && /usr/bin/qf-fix-apk-repos >/dev/null 2>&1 || true
 
 exit 0

@@ -34,3 +34,40 @@
 3. 评估补丁 0003（`jdc_crc_enable` 是否校验自制镜像）——这决定刷机方式。
 4. 网络共享插件的包选择（ksmbd vs samba4）、代理/DNS 插件在 apk 源下的可用性。
 5. 首次真正刷机前补一份整盘 eMMC 镜像。
+
+---
+
+## 2026-10-28（第二轮）用户提出真实体验需求后的方向修正
+
+### 用户诉求
+- 参考 `j55455/qca-all-in-one`（体验好）的思路，但**不要**它那一堆插件。
+- 参考 `j55455/JDC-AX1800PRO-ULTIMATE`（自己的旧固件，体验一般）的思路；其中**必装主题 Kucat**、旧固件的**主机名与默认 WiFi** 要进新固件；**IPv6 默认关闭**。
+- 要求：继续联网搜索/学习，选定最合适的源码与内核，然后反复编译直到成功（自动化任务）。
+
+### 第一轮构建（laipeng668/immortalwrt 基座）失败
+- run `40724253983`，编译阶段挂在这里（逐字）：
+
+  ```
+  ERROR: package/feeds/nss_packages/qca-nss-ecm failed to build.
+  make: *** [.../include/toplevel.mk:233: world] Error 1
+  ```
+
+- 教训：workflow 里 `make -j$(nproc) || make -j1 V=s` 这种写法拿不到明细，已改为「并发失败 → 单线程 V=s 重跑」。
+
+### 基座改为 `LiBwrt/LibWrt` @ `25.12-nss`
+- 证据：用户旧固件与 qca-all-in-one 都用它；`LiBwrt/openwrt-6.x` 已 301 重定向到 `LiBwrt/LibWrt`；`IPQ_MEM_PROFILE_1024` 是该分支**默认值**；`SKB_RECYCLER` 在 >256MB profile 下默认开；它的 `nss_packages` feed 指向 `laipeng668/nss-packages` 分支 **`NSS-LibWrt`**（专为 LibWrt 适配 → 上一轮失败正是基座与 feed 不对齐）。
+- 内核用默认 **6.12**，不上 6.18：用户担心新内核+全系 NSS 发热。
+
+### 插件与体验定版
+- 代理：**Nikki**（mihomo，纯 nft/TPROXY）；DNS：**MosDNS v5**；共享：**Samba4**。断舍离 daed/dae（eBPF）、SmartDNS、OpenList2、PassWall、Tailscale、EasyTier、PushBot、Diskman、SQM、Argon/Aurora。
+- 开箱：Kucat 主题（唯一）、主机名 `qf`、SSID `qf` / 密码 `8765432101`、**双频都开 psk2+ccmp**（旧固件 5G 用 OWE + 关 2.4G，是体验变差的两个直接原因）、IPv6 全关、LAN `192.168.1.1`（贴合现网）。
+
+### 工程上的变化
+- 仓库结构改为对齐旧固件里真正好用的那一套：`configs/{device,apps}.config` + `scripts/{function,01-prepare-packages,02-custom-settings}.sh` + `files/`（uci-defaults、init.d、hotplug）。
+- workflow 新增 **TEST 开关**：只跑 clone/feeds/生成配置/断言，约 6 分钟，不编译 —— 避免用 3 小时去发现一个配置符号写错。
+- 断言升级：硬断言（机型/1G profile/ATH11K 1G/SKB Recycler/NSS drv+ecm/三类插件/kmod-tun+nft-tproxy）+ 断舍离反断言（以最后一次赋值为准）。
+
+### TEST 第一轮（run `40738018686`）
+- 失败点正是断言起作用：模板里还留着旧固件的 `CONFIG_PACKAGE_daed=y` / `CONFIG_PACKAGE_luci-app-daede=y`（我在文件末尾追加的 `=n` 没能覆盖它，断舍离断言又用了「出现过就算命中」的弱判据）。
+- 修法：直接删掉模板里的 daed/dae/eBPF 整段；反断言改为「同名键的最后一次赋值」。
+
