@@ -104,7 +104,7 @@ function generate_config() {
     "CONFIG_PACKAGE_kmod-nft-tproxy=y" \
     "CONFIG_KERNEL_DEBUG_INFO_BTF=y" \
     "CONFIG_PACKAGE_kmod-sched-core=y" \
-    "CONFIG_PACKAGE_kmod-sched-bpf=y"; do
+    "CONFIG_KERNEL_DEBUG_INFO=y"; do
     qf_assert_contains "$target_config" "$sym" "模板关键符号 $sym" || fail=1
   done
 
