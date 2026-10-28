@@ -57,10 +57,10 @@ Actions 免费额度对公开仓库不限，单次构建 ~2-3 小时，产物通
 | 类别 | 选择 | 理由 |
 |---|---|---|
 | 代理 | **Nikki**（mihomo 内核） | 纯 nftables TPROXY，不依赖 iptables；比 OpenClash 轻；与 firewall4 原生兼容 |
-| DNS | **MosDNS v5**（sbwml） | 分流/防泄漏一体，单进程；不再叠 SmartDNS（两套 DNS 抢 53/5335 是旧固件的隐患） |
+| DNS | **OxiDNS**（`svenshi/oxidns` v1.6.1 + `svenshi/luci-app-oxidns`） | 用户指定（2026-10-29 变更，原定 MosDNS）。现网 QWRT 已长期跑 OxiDNS 且配置成体系；Rust 内核单进程、规则用 YAML pipeline；不再叠 SmartDNS（两套 DNS 抢 53/5335 是旧固件的隐患） |
 | 共享 | **Samba4** | 标准 feeds 包，稳定性经过长期验证；8G 存储 + 1G 内存足够 |
 
-断舍离：daed/dae（需要 eBPF）、SmartDNS、OpenList2、PassWall、Tailscale、EasyTier、PushBot、Diskman、SQM、Argon/Aurora 主题。
+断舍离：daed/dae（**包**不要，但内核 eBPF 能力要，见 D11）、MosDNS、SmartDNS、OpenList2、PassWall、Tailscale、EasyTier、PushBot、Diskman、SQM、Argon/Aurora 主题。
 
 ## D8 · 开箱体验固化（沿用旧固件里做对的部分）
 
@@ -75,9 +75,30 @@ Actions 免费额度对公开仓库不限，单次构建 ~2-3 小时，产物通
 ## D9 · 稳定性优先的取舍
 
 - **不启用 NSS 超频**（旧固件的 `nss_freq` 会拉到 1497.6MHz）：脚本仍在固件内，默认 disabled，需要时手动 start。
-- **不引入 eBPF/BTF/XDP**：只有 dae/daed 需要，砍掉可减小内核体积、缩短编译时间、降低发热。
 - 保留（低风险且实测有效）：`qf-nss-perf`（NSS 队列中断绑核 CPU1-3）、`smp_affinity`（EDMA 中断 + GRO）、
   `qf-thermal`（85℃ 限频/降温恢复）、`packet_steering=1`、ECM `disable_packet_steering` 补丁、`qca-nss-drv` START=85。
+
+## D10 · DNS 从 MosDNS 换成 OxiDNS（2026-10-29，用户指定）
+
+- 核心：`svenshi/oxidns` v1.6.1 官方预编译 **aarch64-musl full 包**（Rust），CI 下载 + sha256 校验后**嵌入 base-files**（`/usr/bin/oxidns`），不进 OpenWrt 包编译（省 Rust 工具链与约 40 分钟）。
+  校验值：`d879d4b9199c5c911d296af4df8d9e974523fb98a6ee2418ae7274d152365e42`（5411867 bytes）。
+- 管理界面：`svenshi/luci-app-oxidns`（自带 `root/etc/init.d/oxidns`、`root/etc/config/oxidns`、rpcd 后端），CI clone 进 `package/`。
+- 拓扑**照搬现网已验证的「OxiDNS 单入口」**：`dnsmasq:53`（DHCP 保留）→ `server=127.0.0.1#5335`、`noresolv=1`、`resolvfile=/dev/null` → `oxidns:5335` → 上游。
+- 出厂配置 = **能解析的最小流水线**（`files/etc/oxidns/config.yaml`，forward 223.5.5.5 + 119.29.29.29，UDP/TCP :5335），**不内嵌任何分流/去广告规则**：用户自行导入现网配置。理由：第一版固件内嵌业务配置导致首开 DNS 假死。
+- 未竟：`core_bundle` 取 `full`（含 api/webui/加密协议），因为现网配置用了 `api: http 0.0.0.0:9088` + DoT/DoH 上游。
+
+## D11 · 内核 eBPF / XDP / BTF 回到「满血」（2026-10-29，用户指定）
+
+- 触发：用户要用 **`daeuniverse/honk`** 这种 eBPF 代理，它 CO-RE 依赖 `/sys/kernel/btf/vmlinux`。这是对 D9「不引入 eBPF」的**明确推翻**。
+- 开启：`CONFIG_KERNEL_DEBUG_INFO=y` + `DEBUG_INFO_BTF=y`、`CGROUPS/CGROUP_BPF/CGROUP_NET_PRIO/CGROUP_PERF`、`BPF_EVENTS`、`XDP_SOCKETS`、`NET_CLS_CGROUP`、`IO_URING`、`PERF_EVENTS`、`ARM_PMU`；包侧 `kmod-sched-core`、`kmod-sched-bpf`（TC cls_bpf）、`kmod-xdp-sockets-diag`、`kmod-veth`；`CONFIG_USE_LLVM_HOST=y`。
+- 配套：`net.core.bpf_jit_enable=1`、`bpf_jit_harden=0` 已在 sysctl；`rc.local` 开机挂 `bpffs` 到 `/sys/fs/bpf`（honk 需要）。
+- **已知代价**：BTF 会把内核体积抬上去（旧固件因此把 `KERNEL_SIZE` 改 12288k）。本项目的做法是**先看真实产物大小**，若厂镜像写不下再调 `KERNEL_SIZE`，不先猜。
+- 边界：只买内核能力，**不装 dae/daed 包**；honk 二进制由用户在刷机后自行部署。
+
+## D12 · 刷机由用户执行（2026-10-29）
+
+- 我不动手刷机，也不通过 SSH 触发 `sysupgrade`。职责：产出可校验的固件 + 校验脚本 + 刷机/回滚指引；用户刷完后我负责**起机验证**（基线采集与功能验收）。
+- 因此 `docs/flash-and-recovery.md` 的定位改为**用户可独立执行的操作手册**，且必须包含回滚路径与失败判断表。
 
 ## 未决问题
 

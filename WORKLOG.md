@@ -71,3 +71,32 @@
 - 失败点正是断言起作用：模板里还留着旧固件的 `CONFIG_PACKAGE_daed=y` / `CONFIG_PACKAGE_luci-app-daede=y`（我在文件末尾追加的 `=n` 没能覆盖它，断舍离断言又用了「出现过就算命中」的弱判据）。
 - 修法：直接删掉模板里的 daed/dae/eBPF 整段；反断言改为「同名键的最后一次赋值」。
 
+### TEST 第二轮（run `40741035528`）全部通过
+- 硬断言全绿：`IPQ_MEM_PROFILE_1024`、`ATH11K_MEM_PROFILE_1G`、`kmod-qca-nss-drv/ecm`、`luci-theme-kucat`、`luci-app-nikki`、`luci-app-samba4`、`kmod-tun`、`kmod-nft-tproxy`；断舍离反断言全绿。
+- 出厂固化断言全绿：管理 IP `192.168.1.1`、主机名 `qf`、WiFi UC 的 SSID/密码预设已写入。
+- 两个可接受的 WARN：LuCI 默认主题已锁定 kucat（不需再改 luci-base 模板）；`CONFIG_PACKAGE_mihomo` 在新版 nikki 里已改名（依赖自动带入）。
+
+### 第一轮完整编译（run `40743937143`，TEST=false）
+- 进入 Compile Firmware 阶段后持续运行（约 3h）。它的价值：验证 LibWrt 基座 + NSS feed 能不能全量编过（与下面的需求变更无关）。
+
+---
+
+## 2026-10-29 用户新约束（三条）
+
+来自用户原话：
+1. 「MOS 换成 oxidns」——DNS 插件从 MosDNS 改为 **OxiDNS**。
+2. 「刷机你不用动手，让我自己刷。我自己刷完后会让你启动验证的」——刷机责任归用户，agent 只做产物与验证。
+3. 「上述两个仓库里面的都是开启了 ebpf 相关的满血的这个也要都开启，因为我会在安装后测试一下 `daeuniverse/honk`」——**推翻 D9 的「不引入 eBPF」**，内核要满血 eBPF/BTF/XDP。
+
+### 对应改动
+- **DNS**：`configs/apps.config` 删 MosDNS 全套，加 `luci-app-oxidns`；`scripts/01` 改为「clone `svenshi/luci-app-oxidns` + 下载 `svenshi/oxidns` v1.6.1 aarch64-musl 预编译包（sha256 `d879d4b9…5e42`，5411867 bytes）并 `install` 到 `package/base-files/files/usr/bin/oxidns`」；新增 `files/etc/oxidns/config.yaml`（出厂最小可用流水线：forward 223.5.5.5/119.29.29.29 → UDP/TCP :5335）与 `files/etc/uci-defaults/zz-oxidns`（dnsmasq `noresolv=1`+`resolvfile=/dev/null`+`server=127.0.0.1#5335`，清 MosDNS/SmartDNS 残留，启用 oxidns）。
+  拓扑照搬现网已验证的「OxiDNS 单入口」，不内嵌业务规则（避免首开 DNS 假死的老坑）。
+- **eBPF 满血**：`configs/apps.config` 加回 `CONFIG_KERNEL_DEBUG_INFO(_BTF)`、`CGROUPS/CGROUP_BPF/…`、`BPF_EVENTS`、`XDP_SOCKETS`、`NET_CLS_CGROUP`、`IO_URING`、`PERF_EVENTS`、`ARM_PMU`，包侧 `kmod-sched-core/sched-bpf/xdp-sockets-diag/veth` + `CONFIG_USE_LLVM_HOST=y`；`scripts/02` 的 rc.local 注入新增 `mount -t bpf bpffs /sys/fs/bpf`（honk CO-RE 需要）；断言新增 `DEBUG_INFO_BTF` / `kmod-sched-core` / `kmod-sched-bpf`。
+- **刷机责任**：`docs/flash-and-recovery.md` 重写为用户可独立执行的手册（产物获取与校验→三条刷机路径→回滚→刷完后 agent 的 9 项验证脚本化清单→honk 前置条件→故障判断表）；`docs/decisions.md` 新增 D10/D11/D12。
+- 顺手修：`99-qf-defaults` 的 root 密码从 `passwd -d`（空密码）改为 `chpasswd` 设为 `password`，与现网 QWRT 一致（现有 `~/rsh` 与脚本不用改）。
+- 新增 `docs/learned-from-repos.md`：逐条记录从 `qca-all-in-one` 与 `JDC-AX1800PRO-ULTIMATE` 借鉴什么、丢掉什么（含不采纳项的理由）。
+
+### 当前状态
+- TEST 三轮（run `40752096267`）正在跑，验证 OxiDNS + eBPF 配置符号是否都能落地。
+- 待办：TEST 绿 → 跑完整编译 → 产物断言（manifest 里 nikki/oxidns/samba4/NSS/BTF）→ 交用户刷机 → 用户刷完后做 9 项起机验证。
+
