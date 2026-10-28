@@ -100,3 +100,19 @@
 - TEST 三轮（run `40752096267`）正在跑，验证 OxiDNS + eBPF 配置符号是否都能落地。
 - 待办：TEST 绿 → 跑完整编译 → 产物断言（manifest 里 nikki/oxidns/samba4/NSS/BTF）→ 交用户刷机 → 用户刷完后做 9 项起机验证。
 
+## 2026-10-29 TEST 收绿（run `40759464822`）
+- 02 脚本新增的两类硬断言通过：`内核 eBPF 符号 CONFIG_NET_CLS_BPF/ACT_BPF/SCH_INGRESS=y 已写入 config-default`、`oxidns init START=45`。
+- 踩坑：`scripts/function.sh` 的模板层断言里还留着 `CONFIG_PACKAGE_kmod-sched-bpf=y`，而该包在本基座不存在 → `generate_config` 直接 fail（run `40757551195`）。改成 `CONFIG_KERNEL_DEBUG_INFO=y` 后整条链路绿。
+
+## 2026-10-29 完整编译（run `40761064319`，含 BTF）
+- 编译阶段成功：`tools/dwarves` 被下载并编译（pahole 参与），说明 BTF 走的是真链路；镜像产出正常。
+- 但 Post-Build Assertions 报 `FAIL: kernel CONFIG_DEBUG_INFO_BTF 未启用`。
+  根因不是内核缺 BTF，而是断言找错了 .config：`find build_dir -path "*linux-6.12*/.config"` 命中了
+  `build_dir/toolchain-aarch64_cortex-a53_gcc-14.3.0_musl/linux-6.12.112/.config`（交叉工具链的 kernel headers 配置），
+  不是目标内核 `build_dir/target-*/linux-qualcommax_ipq60xx/linux-6.12.112/.config`。
+- 修法：find 路径改为 `*linux-qualcommax_ipq60xx*/.config`，且找不到时硬失败（不再 WARN 放过），避免验证形同虚设。
+
+## 2026-10-29 完整编译重跑（run `40773439768`，TEST=false RELEASE=true）
+- 目的：拿到真正通过内核符号校验的产物，并在 GitHub Release 里放固件，方便用户自行下载刷机。
+- 同时交付：`scripts/verify-live.sh`（刷机后 10 组只读验收）、`docs/honk-notes.md`（eBPF 前置条件与排查顺序）。
+
