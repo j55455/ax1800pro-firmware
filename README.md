@@ -2,7 +2,7 @@
 
 **目标**：为这台硬改（1G 内存 / 8G 存储）的京东云亚瑟做一套**自己可控、可重复构建**的固件，目标体验是「稳定、好用」。
 
-**范围**：固件本体只做**基座**（系统 + NSS + 中文 LuCI + 存储/诊断）。代理插件、DNS 插件（各只运行一个）和网络共享插件都**后期装**，后期换插件不等于重刷固件。
+**范围**：固件本体做一个**能直接用的基座**：系统 + 满血 NSS + 中文 LuCI + Kucat 主题 + 三类插件（代理 1 个 / DNS 1 个 / 共享 1 个）。插件的**具体配置**（订阅、节点、规则）不内嵌，刷机后还原。
 
 ---
 
@@ -12,10 +12,20 @@
 ax1800pro-firmware/
 ├─ README.md                     本文件（目标 / 结构 / 进度 / 刷机纪律）
 ├─ WORKLOG.md                    逐轮工作日志（做了什么、为什么、下一步）
-├─ .github/workflows/build.yml   GitHub Actions 构建流水线（6.12 / 6.18 可选）
-├─ configs/ss01-seed.config      固件配置骨架（target/device + NSS + 基础包）
-├─ patches/                      给源码树打的补丁（含约定与「需不需要打」的依据）
-├─ scripts/                      本机辅助脚本
+├─ .github/workflows/build.yml   GitHub Actions 流水线（LibWrt 25.12-nss，支持 TEST 只验配置）
+├─ configs/
+│  ├─ device.config              硬件/内核配置（机型 + 1G profile + ATH11K 1G + SKB Recycler + NSS 驱动栈）
+│  └─ apps.config                LuCI / Kucat / Nikki / MosDNS / Samba4 / 存储 / 运维包
+├─ scripts/
+│  ├─ function.sh                断言库 + .config 装配 + 内核 12MB 扩容
+│  ├─ 01-prepare-packages.sh     插件克隆与 feeds 去重（断舍离）
+│  ├─ 02-custom-settings.sh      出厂参数固化 + 高通平台底层补丁
+│  └─ check-artifact.sh          产物检查辅助
+├─ files/                       直接合并进 rootfs 的文件
+│  ├─ etc/uci-defaults/99-qf-defaults   首开固化（主机名/WiFi/IPv6 关/zram/主题/调优）
+│  ├─ etc/init.d/{qf-nss-perf,smp_affinity,qf-thermal,nss_freq}
+│  ├─ etc/hotplug.d/{net/99-nikki-rps,block/20-smb}
+│  └─ usr/bin/{nss_diag,nss_freq,qf-fix-apk-repos}, usr/sbin/qf-thermal-loop
 ├─ docs/
 │  ├─ hardware-baseline.md       硬件/分区/overlay/启动链路实测基线
 │  ├─ firmware-routes.md         候选源码路线调研与对比（含 GitHub 现状）
@@ -42,24 +52,34 @@ ax1800pro-firmware/
 
 ## 选定路线
 
-- **源码**：`laipeng668/immortalwrt` @ `openwrt-25.12`（ImmortalWrt 25.12 + 京东云满血 NSS）
-  - 内核 **6.12** 稳定线，**6.18** 测试线（workflow 里二选一）
-  - `DEFAULT_PACKAGES` 已带满血 NSS：`qca-nss-dp / nss-ifb / qca-nss-drv(+bridge/vlan/pppoe/tunipip6/tun6rd/map-t/qdisc/l2tpv2/gre/igs/lag/mirror/vxlan/wifi-meshmgr) / qca-nss-ecm`
-  - `ipq60xx/target.mk` 额外补 `nss-firmware-ipq60xx` + `kmod-qca-nss-crypto`
-- **编译**：GitHub Actions（本机不建 Linux 构建环境），产物走 artifact / Release。
-- **插件策略**：代理、DNS、网络共享一律后期装。
+- **源码**：`LiBwrt/LibWrt` @ `25.12-nss`（Linux **6.12** + 满血 NSS；`openwrt-6.x` 已被 301 重定向到它）
+  - `IPQ_MEM_PROFILE_1024` 是该分支默认值，1G 内存开箱即用
+  - `nss_packages` feed 指向 `laipeng668/nss-packages` 分支 `NSS-LibWrt`（专为 LibWrt 适配）
+- **插件三件套（各只装一个）**：Nikki（mihomo/TPROXY）· MosDNS v5 · Samba4
+- **开箱体验**：Kucat 主题 / 主机名 `qf` / SSID `qf` 密码 `8765432101` / 双频都开 / IPv6 默认关 / LAN `192.168.1.1`
+- **编译**：GitHub Actions（本机不建 Linux 构建环境），产物走 artifact + 滚动 Release `latest-qf`
 - 选型理由与被否备选见 `docs/decisions.md`；候选路线调研见 `docs/firmware-routes.md`。
+
+## 怎么构建
+
+```bash
+# 只验证配置（约 6 分钟，不编译；改了 configs/ scripts/ 后先跑这个）
+gh workflow run build.yml -f TEST=true            # 或网页 Actions → Run workflow 勾 TEST
+# 完整编译（约 2-3 小时）
+gh workflow run build.yml -f TEST=false
+```
 
 ## 进度
 
 - [x] 硬件/分区/overlay/启动链路基线摸清（含 1G 内存、8G eMMC 实证）
 - [x] 现网配置与策略备份到本地（`backup/20261028-qwrt-live/`）
 - [x] 源码基座选定 + 满血 NSS 落地路径确认（读源码核实）
-- [x] CI 流水线骨架 + 配置 seed + 补丁约定
-- [ ] 建 GitHub 仓库，跑通第一次 6.12 构建（预期要修 seed 包名）
-- [ ] 首次刷机前：整盘 eMMC 镜像 + 确认 u-boot 对自制镜像的校验行为
-- [ ] 刷入后验证：`free -m`（1G）、NSS 卸载生效、Wi-Fi、2.5G/千兆吞吐与 CPU 占用、发热对比
-- [ ] 插件层：代理（Mihomo 系）+ DNS（OxiDNS 或 mosdns，二选一）+ 网络共享
+- [x] CI 流水线（LibWrt 基座 + TEST 模式）+ 配置模板 + 出厂固化脚本
+- [ ] 跑通 TEST（配置闸门全绿）
+- [ ] 跑通完整编译，产出 `sysupgrade` 镜像
+- [ ] 首次刷机前：确认 u-boot 对自制镜像的校验行为 + 分区表/uboot env 快照
+- [ ] 刷入后验证：`free -m`（1G）、NSS 卸载生效、双频 Wi-Fi、千兆吞吐与 CPU 占用、发热对比
+- [ ] 插件层：还原 MosDNS / Nikki 现网规则，定 Samba4 共享方案
 
 ## 研发期纪律（重要）
 

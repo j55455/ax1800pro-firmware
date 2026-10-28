@@ -111,11 +111,14 @@ function generate_config() {
     "CONFIG_PACKAGE_daed=y" \
     "CONFIG_PACKAGE_luci-app-daede=y" \
     "CONFIG_PACKAGE_luci-app-openlist2=y"; do
-    if grep -qxF -- "$sym" "$target_config"; then
+    local key last
+    key=${sym%%=*}
+    last=$(grep -E "^${key}=" "$target_config" | tail -n 1 || true)
+    if [ "$last" = "$sym" ]; then
       qf_err "断舍离组件意外启用: $sym"
       fail=1
     else
-      qf_ok "断舍离组件未启用: $sym"
+      qf_ok "断舍离组件未启用: $key"
     fi
   done
 
