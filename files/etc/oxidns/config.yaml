@@ -18,13 +18,13 @@ plugins:
     type: forward
     args:
       upstreams:
-        - addr: "223.5.5.5"
-        - addr: "119.29.29.29"
+        - addr: "udp://223.5.5.5:53"
+        - addr: "udp://119.29.29.29:53"
 
   - tag: main_sequence
     type: sequence
     args:
-      - exec: $forward_cn
+      - exec: "$forward_cn"
       - exec: accept
 
   - tag: udp_server

@@ -104,16 +104,31 @@ done
 CPUFREQ_INIT=$(find ./feeds/ ./package/ -type f -name "cpufreq.init" 2>/dev/null | head -n 1)
 [ -n "$CPUFREQ_INIT" ] && [ -f "$CPUFREQ_INIT" ] && sed -i 's/START=.*/START=85/g' "$CPUFREQ_INIT"
 
-# (6) 固化 MosDNS 启动脚本：START=99 延后启动（晚于 Nikki 确保代理链路就绪），并注入北京时区
-for f in $(find ./package/ -type f \( -name "mosdns" -o -name "mosdns.init" \) -path "*/init.d/*" 2>/dev/null); do
-    sed -i 's/^START=.*/START=99/g' "$f"
-    if ! grep -q 'TZ="Asia/Shanghai"' "$f"; then
-        sed -i '/procd_open_instance/a \	procd_set_param env TZ="Asia/Shanghai"' "$f"
-        echo "[INFO] Injected TZ=Asia/Shanghai and START=99 into $f"
-    fi
+# (6) 内核 eBPF 满写：TC eBPF / BPF 分类器（honk 必需）
+# 说明：本基座没有 kmod-sched-bpf 包，cls_bpf/act_bpf/sch_ingress 只能从内核 config 层面保证；
+# 基座已有 sch_ingress? 不确定，这里直接写成 =y 让内核自带，不依赖包名。
+KCONF="./target/linux/qualcommax/ipq60xx/config-default"
+for sym in CONFIG_NET_CLS_BPF CONFIG_NET_ACT_BPF CONFIG_NET_SCH_INGRESS CONFIG_NET_SCH_CLSACT; do
+    [ -f "$KCONF" ] || { echo "[FAIL] $KCONF 不存在" >&2; QF_FAIL=1; break; }
+    sed -i "/^${sym}=/d" "$KCONF"
+    echo "${sym}=y" >> "$KCONF"
 done
+if [ -f "$KCONF" ]; then
+    for sym in CONFIG_NET_CLS_BPF CONFIG_NET_ACT_BPF CONFIG_NET_SCH_INGRESS; do
+        qf_hard "$KCONF" "${sym}=y" "内核 eBPF 符号 $sym=y 已写入 config-default"
+    done
+fi
 
-# (7) 固化 Nikki 默认直连大陆 IP（保障国内流量走 NSS 硬件加速）
+# (7) oxidns 启动顺序：早于 dnsmasq 上游解析链路（dnsmasq 懒查询，顺序不敏感，但早启动减少开机假死）
+OXI_INIT=$(find ./package/luci-app-oxidns -type f -path "*/init.d/oxidns" 2>/dev/null | head -n 1)
+if [ -n "$OXI_INIT" ] && [ -f "$OXI_INIT" ]; then
+    sed -i 's/^START=.*/START=45/g' "$OXI_INIT"
+    qf_hard "$OXI_INIT" "START=45" "oxidns init START=45"
+else
+    echo "[WARN] 未找到 luci-app-oxidns 的 init 脚本（跳过启动顺序调整）"
+fi
+
+# (8) 固化 Nikki 默认直连大陆 IP（保障国内流量走 NSS 硬件加速）
 for f in $(find ./package/ -type f -name "nikki.conf" 2>/dev/null); do
     sed -i "s/option 'bypass_china_mainland_ip' '0'/option 'bypass_china_mainland_ip' '1'/g" "$f"
     sed -i "s/option 'bypass_china_mainland_ip6' '0'/option 'bypass_china_mainland_ip6' '1'/g" "$f"

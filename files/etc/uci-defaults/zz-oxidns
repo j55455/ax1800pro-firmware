@@ -47,4 +47,19 @@ if [ -x /etc/init.d/oxidns ]; then
 fi
 /etc/init.d/dnsmasq restart 2>/dev/null || true
 
+# 5. 开机自检（不静默）：oxidns 若没起来，临时放回公共上游保住网络，并在日志留痕
+if ! grep -q 'qf-oxidns-guard' /etc/rc.local 2>/dev/null; then
+	cat >> /etc/rc.local <<'GUARD'
+# qf-oxidns-guard: boot+60s check DNS single-entry alive
+(
+  sleep 60
+  if ! pgrep -f '/usr/bin/oxidns start' >/dev/null 2>&1; then
+    logger -t qf-oxidns "oxidns not running -> temporary fallback upstream 223.5.5.5"
+    uci -q add_list dhcp.@dnsmasq[0].server='223.5.5.5' 2>/dev/null && uci -q commit dhcp
+    /etc/init.d/dnsmasq restart >/dev/null 2>&1
+  fi
+) &
+GUARD
+fi
+
 exit 0
