@@ -100,6 +100,23 @@ Actions 免费额度对公开仓库不限，单次构建 ~2-3 小时，产物通
 - 我不动手刷机，也不通过 SSH 触发 `sysupgrade`。职责：产出可校验的固件 + 校验脚本 + 刷机/回滚指引；用户刷完后我负责**起机验证**（基线采集与功能验收）。
 - 因此 `docs/flash-and-recovery.md` 的定位改为**用户可独立执行的操作手册**，且必须包含回滚路径与失败判断表。
 
+## D13 · 内核 eBPF 的落地方式：内核符号注入，而不是 kmod-sched-bpf 包（2026-10-29）
+
+- 事实：本基座（`LiBwrt/LibWrt@25.12-nss`）**没有 `kmod-sched-bpf` 包定义**（全仓只被 `qosify/Makefile`、`bridger/Makefile` 当依赖引用，无 `KernelPackage/sched-bpf`）；把它写进 .config 会被 defconfig 静默丢弃，写进断言则构建直接失败（已踩：run `40752096267`）。
+- 做法：在 `scripts/02-custom-settings.sh` 里把 `CONFIG_NET_CLS_BPF=y`、`CONFIG_NET_ACT_BPF=y`、`CONFIG_NET_SCH_INGRESS=y`、`CONFIG_NET_SCH_CLSACT=y` 追加进 `target/linux/qualcommax/ipq60xx/config-default`，并断言写入成功；同时保留 `kmod-sched-core`。
+- 验证：构建后在真实内核 `.config` 里检查这 4 个符号（workflow `Post-Build Assertions` 第 4 项），因为「配置里写了」不等于「内核真启用了」。
+
+## D14 · BTF 需要额外关掉 KERNEL_DEBUG_INFO_REDUCED（2026-10-29）
+
+- 源码依据（`config/Config-kernel.in:439-443`）：`config KERNEL_DEBUG_INFO_BTF` 带 `depends on KERNEL_DEBUG_INFO && !KERNEL_DEBUG_INFO_REDUCED`，且 `KERNEL_DEBUG_INFO_REDUCED` 默认值 = `default y if !(…|| TARGET_qualcommax || …) || !BUILDBOT`。非官方 buildbot 构建时它默认 **y**，于是 BTF 被静默丢弃。
+- 修法：`configs/apps.config` 显式写 `# CONFIG_KERNEL_DEBUG_INFO_REDUCED is not set`。代价是内核体积变大，由 12MB `KERNEL_SIZE` 与产物断言兜住。
+
+## D15 · 刷机后验证脚本化（2026-10-29）
+
+- `scripts/verify-live.sh`：只读，分 10 组（系统/内存·zram/NSS/eBPF·BTF/DNS 单入口/无线/网口/插件与主题/IPv6/温度负载），输出 `[ OK ]` `[FAIL]` `[WARN]` 与汇总。
+- 默认走 `~/rsh` 包装，也可 `R='ssh root@192.168.1.1' bash scripts/verify-live.sh` 覆盖。
+- 目的：用户刷完后，agent 一条命令拿到可核对的验收证据，避免「能进 LuCI 就算好」的假验收。
+
 ## 未决问题
 
 - 网络共享的具体形态（Samba4 共享哪块盘、是否要 WebDAV/下载器）——用户说「不急，要细定制」。
