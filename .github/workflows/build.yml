@@ -1,0 +1,168 @@
+name: build-firmware
+
+# 亚瑟（JDCloud RE-SS-01 / AX1800 Pro）专属固件构建
+# 基座：laipeng668/immortalwrt @ openwrt-25.12（ImmortalWrt 25.12 + 京东云满血 NSS）
+# 触发：手动（可选内核 6.12/6.18）+ 打 tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel:
+        description: "内核系列"
+        type: choice
+        default: "6.12"
+        options: ["6.12", "6.18"]
+      source_repo:
+        description: "源码仓库"
+        default: "https://github.com/laipeng668/immortalwrt"
+      source_ref:
+        description: "源码分支/tag"
+        default: "openwrt-25.12"
+      upload_release:
+        description: "构建成功后创建 GitHub Release"
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_REPO: ${{ github.event.inputs.source_repo || 'https://github.com/laipeng668/immortalwrt' }}
+  SOURCE_REF: ${{ github.event.inputs.source_ref || 'openwrt-25.12' }}
+  KERNEL_SERIES: ${{ github.event.inputs.kernel || '6.12' }}
+  DEVICE: jdcloud_re-ss-01
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    steps:
+      - name: Checkout（本仓库：配置/补丁/脚本）
+        uses: actions/checkout@v4
+        with:
+          path: firmware-config
+
+      - name: 清理磁盘（腾出 ~20G）
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune --all --force || true
+          df -h /
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext \
+            gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 \
+            libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev \
+            libncurses-dev libpython3-dev libreadline-dev libssl-dev libtool libyaml-dev libz-dev \
+            lld llvm lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 \
+            python3-pip python3-ply python3-docutils python3-pyelftools qemu-utils re2c rsync scons \
+            squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd \
+            zlib1g-dev zstd rsync time
+          sudo timedatectl set-timezone Asia/Shanghai || true
+
+      - name: 缓存源码 dl 目录与 ccache
+        uses: actions/cache@v4
+        with:
+          path: |
+            openwrt/dl
+            /home/runner/.ccache
+          key: dl-${{ env.KERNEL_SERIES }}-${{ env.SOURCE_REF }}
+          restore-keys: |
+            dl-${{ env.KERNEL_SERIES }}-
+            dl-
+
+      - name: 克隆源码
+        run: |
+          git clone --depth 1 -b "$SOURCE_REF" "$SOURCE_REPO" openwrt
+          cd openwrt
+          git log -1 --format='源码 %H %ci %s'
+          ./scripts/feeds update -a
+
+      - name: 安装 feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds install -a
+
+      - name: 应用本地补丁（patches/*.patch，可选）
+        run: |
+          cd openwrt
+          shopt -s nullglob
+          for p in ../firmware-config/patches/*.patch; do
+            echo "==> 应用 $p"
+            patch -p1 --batch --forward < "$p"
+          done
+
+      - name: 生成 .config
+        run: |
+          cd openwrt
+          cp ../firmware-config/configs/ss01-seed.config .config
+          if [ "$KERNEL_SERIES" = "6.18" ]; then
+            echo "CONFIG_TESTING_KERNEL=y" >> .config
+          fi
+          make defconfig
+          # 断言：设备与 NSS 关键项确实生效
+          grep -q "CONFIG_TARGET_qualcommax_ipq60xx_DEVICE_${DEVICE}=y" .config
+          grep -q "CONFIG_PACKAGE_kmod-qca-nss-ecm=y" .config
+          grep -q "CONFIG_PACKAGE_kmod-qca-nss-drv=y" .config
+          grep -q "CONFIG_PACKAGE_nss-firmware-ipq60xx=y" .config
+          echo "--- 内核版本 ---"
+          grep -E "^CONFIG_(TESTING_KERNEL|KERNEL_PATCHVER)" .config || true
+          echo "--- 配置摘要 ---"
+          grep -E "^CONFIG_TARGET_(BOARD|SUBTARGET|DEVICE)=" .config
+
+      - name: 下载编译依赖
+        run: |
+          cd openwrt
+          make -j"$(nproc)" download || make -j1 download
+
+      - name: 编译
+        run: |
+          cd openwrt
+          make -j"$(nproc)"
+        env:
+          CCACHE_DIR: /home/runner/.ccache
+
+      - name: 汇总产物
+        id: collect
+        run: |
+          cd openwrt
+          OUT=bin/targets/qualcommax/ipq60xx
+          ls -lh "$OUT"
+          mkdir -p ../artifact
+          find "$OUT" -maxdepth 1 -type f \
+            \( -name '*.bin' -o -name '*.itb' -o -name '*.ubi' -o -name 'sha256sums' -o -name '*.manifest' -o -name 'profiles.json' \) \
+            -exec cp -v {} ../artifact/ \;
+          cp -v .config ../artifact/build.config
+          test -n "$(find ../artifact -name '*sysupgrade*' -o -name '*.itb' | head -1)" || { echo '✗ 产物里没有可刷镜像'; exit 1; }
+          echo "stamp=$(date +%Y%m%d-%H%M)" >> "$GITHUB_OUTPUT"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ env.DEVICE }}-k${{ env.KERNEL_SERIES }}-${{ steps.collect.outputs.stamp }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 创建 Release（可选）
+        if: ${{ github.event.inputs.upload_release == 'true' || startsWith(github.ref, 'refs/tags/') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('build-{0}-k{1}', steps.collect.outputs.stamp, env.KERNEL_SERIES) }}
+          name: "亚瑟固件 ${{ steps.collect.outputs.stamp }} (kernel ${{ env.KERNEL_SERIES }})"
+          body: |
+            设备：JDCloud RE-SS-01（亚瑟 AX1800 Pro，硬改 1G/8G）
+            源码：${{ env.SOURCE_REPO }} @ ${{ env.SOURCE_REF }}
+            内核：${{ env.KERNEL_SERIES }}
+          files: artifact/*
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
