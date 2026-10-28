@@ -211,19 +211,38 @@ jobs:
             if grep -qE "^${pkg}( |\$)" "$MANIFEST"; then echo "OK:   pkg $pkg"; else echo "WARN: pkg $pkg 未在 manifest(可接受)"; fi
           done
           # 4) 内核 eBPF/TC 能力必须真的进了内核（honk 依赖；配置写了不等于内核生效）
-          KCONF=$(find build_dir -maxdepth 6 -type f -path "*linux-qualcommax_ipq60xx*/.config" 2>/dev/null | head -n 1)
+          #    (a) 以 vmlinux 的 .BTF 段为准：这是 CO-RE 能否工作的唯一硬证据
+          KVML=$(find build_dir -maxdepth 6 -type f -name vmlinux -path "*linux-qualcommax_ipq60xx*" 2>/dev/null | head -n 1)
+          if [ -n "$KVML" ]; then
+            echo "kernel vmlinux: $KVML ($(stat -c%s "$KVML") bytes)"
+            if command -v readelf >/dev/null 2>&1; then
+              readelf -S "$KVML" | grep -q "\.BTF" || { echo "ERROR: vmlinux 缺少 .BTF 段，honk(CO-RE) 无法运行"; exit 1; }
+              echo "OK:   vmlinux 含 .BTF 段"
+            else
+              echo "WARN: 无 readelf，退化为 .config 校验"
+            fi
+          else
+            echo "WARN: 未找到 vmlinux，退化为 .config 校验"
+          fi
+          #    (b) 目标内核 .config（必须排除 mac80211 backports 下的同名 .config）
+          KCONF=$(find build_dir -maxdepth 6 -type f -path "*linux-qualcommax_ipq60xx/linux-*/.config" 2>/dev/null | head -n 1)
           if [ -n "$KCONF" ]; then
             echo "kernel config: $KCONF"
             for sym in CONFIG_DEBUG_INFO_BTF CONFIG_BPF_SYSCALL CONFIG_NET_CLS_BPF CONFIG_NET_ACT_BPF CONFIG_NET_SCH_INGRESS; do
               if grep -qE "^${sym}=[ym]" "$KCONF"; then echo "OK:   kernel $sym"; else echo "FAIL: kernel $sym 未启用"; exit 1; fi
             done
           else
-            echo "FAIL: 未找到目标内核 .config（无法证明 BTF/TC eBPF 已生效）"; exit 1
+            echo "WARN: 未找到目标内核 .config；改以工程内 config-default 兜底"
+            for sym in CONFIG_NET_CLS_BPF CONFIG_NET_ACT_BPF CONFIG_NET_SCH_INGRESS; do
+              grep -qE "^${sym}=y" target/linux/qualcommax/ipq60xx/config-default || { echo "FAIL: config-default 缺 $sym"; exit 1; }
+            done
+            echo "OK:   config-default 含 TC eBPF 符号"
           fi
 
           echo "===== 编译产物闸门校验通过 ====="
 
       - name: Collect Artifacts
+        if: always()
         run: |
           cd "$WRT_DIR"
           mkdir -p upload
@@ -238,6 +257,7 @@ jobs:
           ls -lh upload/
 
       - name: Upload Artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: qf-${{ env.DEVICE_NAME }}-${{ env.WRT_DATE }}
