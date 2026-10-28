@@ -1,0 +1,40 @@
+# ==============================================================================
+# OxiDNS 出厂最小可用配置（v1.6.x 语法）
+# 目标：刷完机、还没导入个人配置时，DNS 就已经能用，不出现"首开假死"
+#
+# 拓扑（与现网 QWRT 已验证的「OxiDNS 单入口」一致）：
+#   终端 → dnsmasq:53 → 127.0.0.1#5335 → oxidns → 上游 DNS
+#
+# 个人调优配置（分流/去广告/DoT）由用户在 LuCI「OxiDNS → 配置」页导入或直接替换本文件，
+# 固件本身不内嵌任何业务规则（这是第一版固件首开 DNS 假死的教训）。
+# ==============================================================================
+
+log:
+  level: info
+
+plugins:
+  # 国内双上游，任一可用即可解析；不带加密协议，保证首开零依赖
+  - tag: forward_cn
+    type: forward
+    args:
+      upstreams:
+        - addr: "223.5.5.5"
+        - addr: "119.29.29.29"
+
+  - tag: main_sequence
+    type: sequence
+    args:
+      - exec: $forward_cn
+      - exec: accept
+
+  - tag: udp_server
+    type: udp_server
+    args:
+      entry: main_sequence
+      listen: ":5335"
+
+  - tag: tcp_server
+    type: tcp_server
+    args:
+      entry: main_sequence
+      listen: ":5335"

@@ -194,6 +194,9 @@ for q in /sys/class/net/*/queues/rx-*; do
 	[ -e "$q/rps_cpus" ] && echo "f" > "$q/rps_cpus"
 done
 
+# eBPF / bpffs 预挂载（honk 等 CO-RE 代理需要 /sys/fs/bpf）
+mountpoint -q /sys/fs/bpf 2>/dev/null || mount -t bpf bpffs /sys/fs/bpf 2>/dev/null
+
 # 守卫：防止 Nikki bypass 掉回 0（杜绝页面误保存或订阅更新覆写）
 if [ -f /etc/config/nikki ]; then
 	[ "$(uci -q get nikki.proxy.bypass_china_mainland_ip)" != "1" ] && {

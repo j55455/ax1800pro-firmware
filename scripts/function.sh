@@ -97,11 +97,14 @@ function generate_config() {
     "CONFIG_PACKAGE_kmod-qca-nss-drv=y" \
     "CONFIG_PACKAGE_kmod-qca-nss-ecm=y" \
     "CONFIG_PACKAGE_luci-theme-kucat=y" \
-    "CONFIG_PACKAGE_luci-app-mosdns=y" \
+    "CONFIG_PACKAGE_luci-app-oxidns=y" \
     "CONFIG_PACKAGE_luci-app-nikki=y" \
     "CONFIG_PACKAGE_luci-app-samba4=y" \
     "CONFIG_PACKAGE_kmod-tun=y" \
-    "CONFIG_PACKAGE_kmod-nft-tproxy=y"; do
+    "CONFIG_PACKAGE_kmod-nft-tproxy=y" \
+    "CONFIG_KERNEL_DEBUG_INFO_BTF=y" \
+    "CONFIG_PACKAGE_kmod-sched-core=y" \
+    "CONFIG_PACKAGE_kmod-sched-bpf=y"; do
     qf_assert_contains "$target_config" "$sym" "模板关键符号 $sym" || fail=1
   done
 

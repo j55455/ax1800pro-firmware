@@ -1,0 +1,50 @@
+#!/bin/sh
+# ==============================================================================
+# zz-oxidns
+# DNS 单入口接线：dnsmasq(:53) → oxidns(127.0.0.1:5335) → 上游
+# 与现网 QWRT 实测配置一致（dnsmasq: noresolv=1 + resolvfile=/dev/null + server 127.0.0.1#5335）
+#
+# 只接线，不注入业务规则：/etc/oxidns/config.yaml 出厂是「能解析的最小流水线」，
+# 用户可在 LuCI 里替换为自己的分流/去广告配置。
+# ==============================================================================
+
+# 1. oxidns 核心缺失时不做任何 DNS 改动，避免把固件搞成"上不了网"
+if [ ! -x /usr/bin/oxidns ]; then
+	logger -t qf-oxidns "oxidns binary missing, skip DNS rewiring"
+	exit 0
+fi
+
+mkdir -p /var/lib/oxidns /etc/oxidns
+# 出厂配置已在镜像内（files/etc/oxidns/config.yaml）；若被误删则不做任何 DNS 改动
+[ -s /etc/oxidns/config.yaml ] || { logger -t qf-oxidns "oxidns config missing, skip"; exit 0; }
+
+# 2. dnsmasq 只做 DHCP + 本地域名，解析全部交给 oxidns
+uci -q set dhcp.@dnsmasq[0].noresolv='1'
+uci -q set dhcp.@dnsmasq[0].resolvfile='/dev/null'
+uci -q set dhcp.@dnsmasq[0].domainneeded='1'
+uci -q set dhcp.@dnsmasq[0].boguspriv='1'
+uci -q set dhcp.@dnsmasq[0].localise_queries='1'
+uci -q set dhcp.@dnsmasq[0].rebind_protection='0'
+uci -q set dhcp.@dnsmasq[0].ednspacket_max='1232'
+uci -q set dhcp.@dnsmasq[0].filter_aaaa='1'
+# 清掉历史 server 列表，只留 oxidns 一条（防止残留 223.5.5.5 直连绕过分流）
+uci -q delete dhcp.@dnsmasq[0].server 2>/dev/null || true
+uci -q add_list dhcp.@dnsmasq[0].server='127.0.0.1#5335'
+uci -q commit dhcp
+
+# 3. 清掉可能的 MosDNS / SmartDNS 残留（换固件不背历史包袱）
+for s in mosdns smartdns; do
+	if [ -x "/etc/init.d/$s" ]; then
+		/etc/init.d/"$s" disable 2>/dev/null || true
+		/etc/init.d/"$s" stop 2>/dev/null || true
+	fi
+done
+
+# 4. 拉起并常驻 oxidns
+if [ -x /etc/init.d/oxidns ]; then
+	/etc/init.d/oxidns enable 2>/dev/null || true
+	/etc/init.d/oxidns restart 2>/dev/null || /etc/init.d/oxidns start 2>/dev/null || true
+fi
+/etc/init.d/dnsmasq restart 2>/dev/null || true
+
+exit 0
