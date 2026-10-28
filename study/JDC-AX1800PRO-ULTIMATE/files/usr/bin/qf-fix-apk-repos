@@ -1,0 +1,25 @@
+#!/bin/sh
+# ==============================================================================
+# qf-fix-apk-repos —— apk / opkg 软件源纯化（去重 + 剔除已知失效分类源）
+#
+# 背景：出厂固件内置的软件源常含编译期残留的失效分类源（如 video 分类在镜像站不存在，
+#       导致 apk update 报 "No such file or directory"）与重复条目，界面刷新时报错警告。
+#
+# 处理：
+#   1. 对 distfeeds.list / repositories / opkg distfeeds.conf 逐行去重（保留首次出现）；
+#   2. 剔除已知失效的 /video/packages.adb 分类源（镜像站无此分类）；
+#   3. 刷新 apk 索引（失败不致命，避免网络未就绪时阻塞开机）。
+#
+# 幂等：可重复执行；不改动有效源，不新增源。
+# ==============================================================================
+set -eu
+
+for f in /etc/apk/repositories.d/distfeeds.list /etc/apk/repositories /etc/opkg/distfeeds.conf; do
+	[ -f "$f" ] || continue
+	awk '!seen[$0]++ && $0 !~ /\/video\/packages\.adb/' "$f" > "$f.qftmp" 2>/dev/null && mv "$f.qftmp" "$f"
+done
+
+command -v apk >/dev/null 2>&1 && apk update >/dev/null 2>&1 || true
+command -v opkg >/dev/null 2>&1 && opkg update >/dev/null 2>&1 || true
+
+exit 0

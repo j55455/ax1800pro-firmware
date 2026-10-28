@@ -1,0 +1,28 @@
+#!/bin/sh /etc/rc.common
+# ==============================================================================
+# qf-nss-perf  ——  QWRT 同款 NSS 满血调优（逆向自 QWRT /etc/init.d/qca-nss-drv）
+# 依据：QWRT 将 nss_queue1/2/3 中断分别绑定 CPU1/2/3，并开启 dev.nss.rps.enable，
+#       使 NSS 硬件转发中断不占用 CPU0（CPU0 留给系统与代理进程），千兆转发零 CPU 抖动。
+# 本脚本对不存在的节点全部做存在性判断，缺失即静默跳过，绝不影响启动稳定性。
+# ==============================================================================
+
+START=99
+boot() { start; }
+
+start() {
+	# 1. 将 NSS 各队列中断绑定到独立 CPU（queue1->CPU1, queue2->CPU2, queue3->CPU3）
+	local q irqs mask irq
+	for q in 1 2 3; do
+		irqs=$(grep "nss_queue$q" /proc/interrupts 2>/dev/null | cut -d ':' -f 1 | tr -d ' ')
+		mask=$(printf '%x' $((1 << q)))
+		for irq in $irqs; do
+			[ -e "/proc/irq/$irq/smp_affinity" ] && echo "$mask" > "/proc/irq/$irq/smp_affinity" 2>/dev/null
+		done
+	done
+
+	# 2. 开启 NSS RPS 软中断均衡（QWRT: dev.nss.rps.enable=1）
+	[ -e /proc/sys/dev/nss/rps/enable ] && echo 1 > /proc/sys/dev/nss/rps/enable 2>/dev/null
+
+	# 3. 开启 NSS WiFi 重定向加速（QWRT: dev.nss.general.redirect=1，存在才开）
+	[ -e /proc/sys/dev/nss/general/redirect ] && echo 1 > /proc/sys/dev/nss/general/redirect 2>/dev/null
+}

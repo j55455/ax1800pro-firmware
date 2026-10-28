@@ -1,0 +1,21 @@
+#!/bin/sh /etc/rc.common
+# ==============================================================================
+# nss_freq —— 高通 IPQ6000 NSS 网络硬件加速协处理器开机自动调频服务
+# 来源：VIKINGYFY ImmortalWrt / qualcommax
+# START=95：早于代理与网络业务启动，自动将 NSS 核心频率推至高性能档位
+# ==============================================================================
+
+START=95
+
+start() {
+	local level
+
+	config_load nss_freq
+	config_get level settings level high
+	case "$level" in
+		mid|high) ;;
+		*) level=high ;;
+	esac
+
+	/usr/bin/nss_freq "$level" >/dev/null 2>&1
+}
