@@ -150,7 +150,12 @@
    断言 DNS 守卫是独立 init 服务、`files/` 里不许再出现写 rc.local 的死代码守卫。语法错误再也不会被带进固件。
 
 ### 当前状态（2026-10-29 复审后）
-- 已发布的 `latest-qf`（run 40811758474 产物）**不含**上述修复，仍在 Release 上有效可刷；
-  下一次完整构建后 Release 会自动替换为修复版（新时间戳产物上传、旧产物被清理）。
+- run `40850771920` 在 Generate Config 步被我新加的静态闸门拦下：`grep -rq 'qf-oxidns-guard' ./files/` 把 zz-oxidns 里的**清理代码**当成了违规（自伤）。
+  修：闸门改为只抓「向 /etc/rc.local 重定向/追加」的真信号：`grep -rqE '(>>?|tee -a)[[:space:]]*/etc/rc\.local' ./files/`（并实测合成 positive 能命中、仓库内无命中）。
+- run `40853277850`：**全绿**，含 `Publish Rolling Release`（首次自动发版成功）。
+  Release 已自动换成新产物 `qf-20261029_180003-…`（sysupgrade 64,358,673B / factory 69,511,300B），旧时间戳产物被清理。
+- 新包复核：`sha256 4b74541b15a6d16b2e54846dd16252d81e6731271aeed03c575c1dcda4bc562f`；
+  BTF 字节级证据仍在（`root` 56,950,784B squashfs xz；kernel FIT 7,403,092B → Image 19,775,496B → BTF @13,450,908，typeLen 2,174,232）。
+- 新增 post-build 闸门 (c)：校验 `root-qualcommax*` 暂存根里确实含 `etc/init.d/qf-dns-guard`/`usr/sbin/qf-dns-guard`/`etc/oxidns/config.yaml` 等且可执行（找不到暂存根时 WARN 不拦）。
 
 

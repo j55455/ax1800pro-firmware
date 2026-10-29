@@ -247,6 +247,19 @@ jobs:
             echo "ERROR: 未找到 ELF 格式的 vmlinux（无法校验 .BTF）"; exit 1
           fi
 
+          #    (c) 我们注入的运行时文件是否真进了镜像暂存根（不是只躺在仓库里）
+          STAGE=$(find build_dir -maxdepth 2 -type d -name 'root-qualcommax*' 2>/dev/null | head -n 1)
+          if [ -n "$STAGE" ]; then
+            for f in etc/init.d/qf-dns-guard usr/sbin/qf-dns-guard etc/init.d/qf-nss-perf \
+                     etc/uci-defaults/99-qf-defaults etc/uci-defaults/zz-oxidns etc/oxidns/config.yaml; do
+              if [ -e "$STAGE/$f" ]; then echo "OK:   staged $f"; else echo "FAIL: 镜像暂存根缺少 $f"; exit 1; fi
+            done
+            [ -x "$STAGE/etc/init.d/qf-dns-guard" ] || { echo "FAIL: qf-dns-guard 在镜像里不可执行"; exit 1; }
+            echo "OK:   qf-dns-guard 在镜像里可执行"
+          else
+            echo "WARN: 未找到镜像暂存根（root-qualcommax*），跳过文件落地校验"
+          fi
+
           echo "===== 编译产物闸门校验通过 ====="
 
       - name: Collect Artifacts
