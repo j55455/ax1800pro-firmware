@@ -321,8 +321,10 @@ fi
 echo "[INFO] 注入脚本 shell 语法检查全部通过"
 qf_hard "./files/etc/init.d/qf-dns-guard" "USE_PROCD=1" "DNS 守卫是独立 init 服务"
 qf_hard "./files/usr/sbin/qf-dns-guard" "qf-dns-fallback" "DNS 守卫兜底逻辑就位"
-if grep -rq 'qf-oxidns-guard' ./files/ 2>/dev/null; then
-    echo "[FAIL] files/ 中仍存在写入 rc.local 的死代码守卫（exit 0 之后不执行）" >&2
+QF_RC_PAT='(>>?|tee -a)[[:space:]]*/etc/rc\.local'
+if grep -rqE "$QF_RC_PAT" ./files/ 2>/dev/null; then
+    echo "[FAIL] files/ 中存在向 /etc/rc.local 重定向/追加的脚本（stock rc.local 自带 exit 0，追加内容不会执行）" >&2
+    grep -rnE "$QF_RC_PAT" ./files/ 2>/dev/null >&2
     exit 1
 fi
 echo "[INFO] DNS 守卫不再写入 rc.local"
