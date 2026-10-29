@@ -82,7 +82,7 @@ else
 fi
 JIT=$(rex 'cat /proc/sys/net/core/bpf_jit_enable 2>/dev/null')
 [ "$JIT" = "1" ] && ok "bpf_jit_enable=1" || bad "bpf_jit_enable='$JIT'（期望 1）"
-BPFFS=$(rex "awk '\$3==\"/sys/fs/bpf\" && \$5==\"bpf\"{print \"yes\"}' /proc/mounts")
+BPFFS=$(rex "awk '\$2==\"/sys/fs/bpf\" && \$3==\"bpf\"{print \"yes\"}' /proc/mounts")
 [ "$BPFFS" = "yes" ] && ok "/sys/fs/bpf 已挂载为 bpf 文件系统" || bad "/sys/fs/bpf 未挂载（rc.local 的 bpffs 预挂载没生效，honk 会失败）"
 SYMS=$(rex "zcat /proc/config.gz 2>/dev/null")
 if [ -n "$SYMS" ]; then
