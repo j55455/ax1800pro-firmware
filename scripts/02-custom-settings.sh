@@ -104,19 +104,26 @@ done
 CPUFREQ_INIT=$(find ./feeds/ ./package/ -type f -name "cpufreq.init" 2>/dev/null | head -n 1)
 [ -n "$CPUFREQ_INIT" ] && [ -f "$CPUFREQ_INIT" ] && sed -i 's/START=.*/START=85/g' "$CPUFREQ_INIT"
 
-# (6) 内核 eBPF 满写：TC eBPF / BPF 分类器（honk 必需）
-# 说明：本基座没有 kmod-sched-bpf 包，cls_bpf/act_bpf/sch_ingress 只能从内核 config 层面保证；
-# 基座已有 sch_ingress? 不确定，这里直接写成 =y 让内核自带，不依赖包名。
+# (6) 内核 eBPF 满写：BTF(CO-RE) + TC eBPF / BPF 分类器（honk 必需）
+# 重要教训：顶层的 CONFIG_KERNEL_DEBUG_INFO_BTF=y 只控制「是否选 DWARVES 工具」，
+# 并不会自动写进内核 .config（generic/config-6.12 里写的是 `# CONFIG_DEBUG_INFO is not set`
+# 和 `# CONFIG_DEBUG_INFO_BTF is not set`）。实测：vmlinux 19MB 但无 .BTF 段。
+# 所以必须把内核符号直接注入 target 的 config-default（后者优先级高于 generic config）。
 KCONF="./target/linux/qualcommax/ipq60xx/config-default"
-for sym in CONFIG_NET_CLS_BPF CONFIG_NET_ACT_BPF CONFIG_NET_SCH_INGRESS CONFIG_NET_SCH_CLSACT; do
+for sym in CONFIG_DEBUG_INFO CONFIG_DEBUG_INFO_BTF CONFIG_NET_CLS_BPF CONFIG_NET_ACT_BPF CONFIG_NET_SCH_INGRESS CONFIG_NET_SCH_CLSACT; do
     [ -f "$KCONF" ] || { echo "[FAIL] $KCONF 不存在" >&2; QF_FAIL=1; break; }
     sed -i "/^${sym}=/d" "$KCONF"
     echo "${sym}=y" >> "$KCONF"
 done
+# DEBUG_INFO_REDUCED 必须显式关掉，否则 BTF 被内核静默丢弃
+for sym in CONFIG_DEBUG_INFO_REDUCED; do
+    [ -f "$KCONF" ] && { sed -i "s/^${sym}=y/# ${sym} is not set/" "$KCONF"; grep -qE "^# ${sym} is not set" "$KCONF" || echo "# ${sym} is not set" >> "$KCONF"; }
+done
 if [ -f "$KCONF" ]; then
-    for sym in CONFIG_NET_CLS_BPF CONFIG_NET_ACT_BPF CONFIG_NET_SCH_INGRESS; do
-        qf_hard "$KCONF" "${sym}=y" "内核 eBPF 符号 $sym=y 已写入 config-default"
+    for sym in CONFIG_DEBUG_INFO_BTF CONFIG_NET_CLS_BPF CONFIG_NET_ACT_BPF CONFIG_NET_SCH_INGRESS; do
+        qf_hard "$KCONF" "${sym}=y" "内核符号 $sym=y 已写入 config-default"
     done
+    qf_hard "$KCONF" "# CONFIG_DEBUG_INFO_REDUCED is not set" "DEBUG_INFO_REDUCED 已关闭（BTF 前置条件）"
 fi
 
 # (7) oxidns 启动顺序：早于 dnsmasq 上游解析链路（dnsmasq 懒查询，顺序不敏感，但早启动减少开机假死）
