@@ -19,9 +19,6 @@ on:
       - 'v*'
 # 注：push 到 main 不会自动构建（编译要 3 小时），日常改动手动 workflow_dispatch 触发
 
-permissions:
-  contents: write
-
 env:
   REPO: j55455/ax1800pro-firmware
   REPO_URL: https://github.com/LiBwrt/LibWrt
