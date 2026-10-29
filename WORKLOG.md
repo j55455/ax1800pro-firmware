@@ -112,7 +112,20 @@
   不是目标内核 `build_dir/target-*/linux-qualcommax_ipq60xx/linux-6.12.112/.config`。
 - 修法：find 路径改为 `*linux-qualcommax_ipq60xx*/.config`，且找不到时硬失败（不再 WARN 放过），避免验证形同虚设。
 
-## 2026-10-29 完整编译重跑（run `40773439768`，TEST=false RELEASE=true）
-- 目的：拿到真正通过内核符号校验的产物，并在 GitHub Release 里放固件，方便用户自行下载刷机。
-- 同时交付：`scripts/verify-live.sh`（刷机后 10 组只读验收）、`docs/honk-notes.md`（eBPF 前置条件与排查顺序）。
+## 2026-10-29 BTF 真正落地（run `40800689103` / `40811758474`）
+- 根因：顶层的 `CONFIG_KERNEL_DEBUG_INFO_BTF=y` 只负责选 DWARVES 工具，**不会写进内核 .config**（`target/linux/generic/config-6.12` 里就是 `# CONFIG_DEBUG_INFO is not set`）。
+  修法：在 `scripts/02-custom-settings.sh` 注块 (6) 把 `CONFIG_DEBUG_INFO=y`、`CONFIG_DEBUG_INFO_BTF=y`、`# CONFIG_DEBUG_INFO_REDUCED is not set` 连同 TC eBPF 符号一起写进 `target/linux/qualcommax/ipq60xx/config-default`。
+- 断言也错了两轮：先是打到了 toolchain 的 kernel-headers `.config`，再是打到了 mac80211 backports；而且 `build_dir/.../linux-qualcommax_ipq60xx/vmlinux` 是**裸 Image 不是 ELF**（readelf 报 wrong magic）。最终改为：按 ELF magic `7f454c46` 筛候选 + `readelf -S | grep .BTF`。
+- run `40811758474` 结果：manifest 硬列表全 `OK`，内核 5 个符号全 `OK`，`OK: vmlinux 含 .BTF 段`。
+- 额外字节级实证：`sysupgrade.bin`（tar）→ `kernel`（7,403,092B FIT）→ 偏移 236 处 gzip → `Image` 19,775,496B，`0x38` 处 magic `0x644d5241`，偏移 **13,450,908** 处 BTF 头（`hdr_len=24`、`type_len=2,174,232`、`str_len=1,540,698`）。
+
+## 2026-10-29 Release 发布
+- 最后一环 `Publish Rolling Release` 失败：`release not found`（`gh release create` 静默失败 + 把 stderr 丢了）。
+  修法：workflow 顶部加 `permissions: contents: write`，并去掉 `2>/dev/null` 让错误可见; 同次用 REST API 手动发版。
+- 已发布：<https://github.com/j55455/ax1800pro-firmware/releases/tag/latest-qf>（sysupgrade 64,358,673B / factory 69,510,260B / seed）。
+
+### 当前状态
+- 固件链条已完整跑通：TEST → 完整编译 → 产物与内核能力闸门 → 官方 Release 可下载。
+- 下一步：用户自行刷机（sysupgrade）→ agent 跑 `scripts/verify-live.sh` 做 10 组只读验收 → 再谈 honk 与插件规则回填。
+
 

@@ -55,7 +55,8 @@ ax1800pro-firmware/
 - **源码**：`LiBwrt/LibWrt` @ `25.12-nss`（Linux **6.12** + 满血 NSS；`openwrt-6.x` 已被 301 重定向到它）
   - `IPQ_MEM_PROFILE_1024` 是该分支默认值，1G 内存开箱即用
   - `nss_packages` feed 指向 `laipeng668/nss-packages` 分支 `NSS-LibWrt`（专为 LibWrt 适配）
-- **插件三件套（各只装一个）**：Nikki（mihomo/TPROXY）· MosDNS v5 · Samba4
+- **插件三件套（各只装一个）**：Nikki（mihomo/TPROXY）· **OxiDNS v1.6.1**（单入口 DNS）· Samba4
+- **内核能力**：BTF + TC eBPF（`NET_CLS_BPF` / `NET_ACT_BPF` / `NET_SCH_INGRESS`）已开启，为 honk 等 CO-RE 代理预留（见 `docs/honk-notes.md`）
 - **开箱体验**：Kucat 主题 / 主机名 `qf` / SSID `qf` 密码 `8765432101` / 双频都开 / IPv6 默认关 / LAN `192.168.1.1`
 - **编译**：GitHub Actions（本机不建 Linux 构建环境），产物走 artifact + 滚动 Release `latest-qf`
 - 选型理由与被否备选见 `docs/decisions.md`；候选路线调研见 `docs/firmware-routes.md`。
@@ -69,17 +70,30 @@ gh workflow run build.yml -f TEST=true            # 或网页 Actions → Run wo
 gh workflow run build.yml -f TEST=false
 ```
 
+## 下载固件（自己刷）
+
+滚动 Release：<https://github.com/j55455/ax1800pro-firmware/releases/tag/latest-qf>
+
+| 用途 | 文件 | sha256 |
+| --- | --- | --- |
+| **sysupgrade（推荐，Web/LuCI 直升）** | `qf-20261029_112932-libwrt-qualcommax-ipq60xx-jdcloud_re-ss-01-squashfs-sysupgrade.bin` | `bac5b2888a46b7843de4a309fd8411dbbb73c1bd7fa581bde37c0904bfbef3bf` |
+| factory（u-boot 恢复页 / 首刷） | `qf-20261029_112932-libwrt-qualcommax-ipq60xx-jdcloud_re-ss-01-squashfs-factory.bin` | `6e9d80179c67ab69d97371a27ed32dd6fb9a98a5da570b0fbeee8540a426514f` |
+
+刷完让 agent 做验收：`bash scripts/verify-live.sh`（只读，10 组检查）。
+
 ## 进度
 
 - [x] 硬件/分区/overlay/启动链路基线摸清（含 1G 内存、8G eMMC 实证）
 - [x] 现网配置与策略备份到本地（`backup/20261028-qwrt-live/`）
 - [x] 源码基座选定 + 满血 NSS 落地路径确认（读源码核实）
 - [x] CI 流水线（LibWrt 基座 + TEST 模式）+ 配置模板 + 出厂固化脚本
-- [ ] 跑通 TEST（配置闸门全绿）
-- [ ] 跑通完整编译，产出 `sysupgrade` 镜像
+- [x] 跑通 TEST（配置闸门全绿，run `40759464822`）
+- [x] 跑通完整编译（run `40811758474`：产物、manifest、内核 `.BTF` 全部通过校验）
+- [x] BTF/TC eBPF 从固件二进制字节层面实证（`Image` 偏移 13450908 处 BTF 头）
 - [ ] 首次刷机前：确认 u-boot 对自制镜像的校验行为 + 分区表/uboot env 快照
-- [ ] 刷入后验证：`free -m`（1G）、NSS 卸载生效、双频 Wi-Fi、千兆吞吐与 CPU 占用、发热对比
-- [ ] 插件层：还原 MosDNS / Nikki 现网规则，定 Samba4 共享方案
+- [ ] 刷入后验证：`scripts/verify-live.sh`（1G 内存、NSS、双频 Wi-Fi、OxiDNS 单入口、IPv6 关闭、eBPF）
+- [ ] 插件层：还原 OxiDNS / Nikki 现网规则，定 Samba4 共享方案
+- [ ] honk 实机测试（需先停 Nikki，见 `docs/honk-notes.md`）
 
 ## 研发期纪律（重要）
 
