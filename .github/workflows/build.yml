@@ -1,5 +1,8 @@
 name: Build AX1800Pro Firmware
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
     inputs:
@@ -280,4 +283,4 @@ jobs:
           cd "$WRT_DIR"
           gh release create latest-qf --title "AX1800Pro 最新构建 (rolling)" \
             --notes "基于 LiBwrt/LibWrt ${REPO_BRANCH} @ ${WRT_HASH}，Linux ${KERNEL_VERSION}，构建于 ${BUILD_DAY}" \
-            upload/* 2>/dev/null || gh release upload latest-qf upload/* --clobber
+            upload/* || gh release upload latest-qf upload/* --clobber
