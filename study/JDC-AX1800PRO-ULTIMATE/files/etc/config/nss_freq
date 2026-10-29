@@ -1,2 +1,0 @@
-config nss_freq 'settings'
-	option level 'high'
