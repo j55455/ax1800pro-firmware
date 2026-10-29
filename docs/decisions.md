@@ -117,6 +117,22 @@ Actions 免费额度对公开仓库不限，单次构建 ~2-3 小时，产物通
 - 默认走 `~/rsh` 包装，也可 `R='ssh root@192.168.1.1' bash scripts/verify-live.sh` 覆盖。
 - 目的：用户刷完后，agent 一条命令拿到可核对的验收证据，避免「能进 LuCI 就算好」的假验收。
 
+## D16 · 复审 6 条缺陷：以「静态闸门 + 真实断言」收口（2026-10-29）
+
+**背景**：用户对外部复审结果逐条指出问题（自动发布打错仓库 / DNS 兜底是不可执行代码 / 密码失败回退清空 / 主题注册段删了没重建 / 验收脚本误报漏报）。
+
+**决策与理由**：
+1. **发布步骤不再依赖当前目录**：`gh` 会从 git remote 推断仓库，旧写法 `cd "$WRT_DIR" && gh release …` 把目标变成了上游 `LiBwrt/LibWrt`。现在所有 gh 调用显式 `-R "$REPO"`，产物目录用绝对 `UPLOAD_DIR="$WRT_DIR/upload"`。
+2. **DNS 兜底改为独立 procd 服务**（`/etc/init.d/qf-dns-guard` → `/usr/sbin/qf-dns-guard`）。
+   抛弃「往运行期 rc.local 追加」这种做法——stock rc.local 自带 `exit 0`，追加内容永远不执行。
+   兜底顺序：自检存活 → 手动拉起一次 → 仍失败才放开单入口（`noresolv=0` + 公共上游）并写 `/tmp/.qf-dns-fallback`。
+3. **密码失败不降级**：删掉 `passwd -d root`。宁可保留镜像默认并留日志，也不能主动把 root 变成无密码。
+4. **主题注册显式重建 section**：`uci delete luci.themes` 之后先 `uci set luci.themes='internal'`，再写 `KuCat`/`mediaurlbase`，否则留下无类型 section。
+5. **验收脚本必须能证伪**：apk 用 `apk info -e`（不存在 `list-installed`）；DNS 要求「上游恰好 1 条且等于 127.0.0.1#5335」+ 真实监听 + 直连解析；所有「管道成功即通过」的判据改取文本后比较。
+6. **把这类 bug 变成构建期失败**：`02` 脚本第 9 段对所有注入脚本跑 `sh -n`，并断言 DNS 守卫是独立 init 服务、`files/` 中不再出现写 rc.local 的死代码守卫。
+
+**代价**：一次完整构建（约 1h40）才能验证发布链路；期间 Release 上的旧包保持可用。
+
 ## 未决问题
 
 - 网络共享的具体形态（Samba4 共享哪块盘、是否要 WebDAV/下载器）——用户说「不急，要细定制」。

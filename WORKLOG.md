@@ -128,4 +128,29 @@
 - 固件链条已完整跑通：TEST → 完整编译 → 产物与内核能力闸门 → 官方 Release 可下载。
 - 下一步：用户自行刷机（sysupgrade）→ agent 跑 `scripts/verify-live.sh` 做 10 组只读验收 → 再谈 honk 与插件规则回填。
 
+## 2026-10-29 复审缺陷修复（用户 review 提出 6 条，全部落实）
+外部复审指出上一版仍有硬伤，逐条修（均已静态验证，待下一次完整构建 baked-in）：
+
+1. **自动发布打错仓库**：原 step 先 `cd "$WRT_DIR"` 再调 `gh`，`gh` 从 LibWrt 克隆目录的 git remote 推断仓库 = `LiBwrt/LibWrt` → 403。
+   修：去掉对源码树的 `cd`，产物目录显式 `UPLOAD_DIR="$WRT_DIR/upload"`，**每个 gh 调用都带 `-R "$REPO"`**；
+   另外发布前用 `gh release view --json assets` 清理上一轮旧时间戳产物，避免 release 越堆越多。
+2. **DNS 兜底是不可执行代码**：守卫 heredoc 被追加在 `/etc/rc.local` 的 `exit 0` **之后**，永不执行。
+   修：新增独立服务 `files/etc/init.d/qf-dns-guard`（procd，无 respawn，一次性）+ `files/usr/sbin/qf-dns-guard`
+   （开机 60s 自检：活着 → 记日志；死了 → 先手动拉起一次；仍死 → 放开单入口换 223.5.5.5/119.29.29.29 并写
+   `/tmp/.qf-dns-fallback` 标记）。`zz-oxidns` 改为 enable 该服务，并清理旧固件残留在 rc.local 的死块。
+3. **密码失败回退清空**：删掉 `|| passwd -d root`。改为 chpasswd 成功才记日志，失败只 WARN 留痕并保留镜像默认状态。
+4. **主题注册段删了没重建**：`uci delete luci.themes` 后直接写选项会留下无类型 section。
+   修：显式 `uci -q set luci.themes='internal'` 重建（stock 即 `config internal 'themes'`）再写 `KuCat` + `mediaurlbase`。
+5. **verify-live.sh 误报/漏报**：
+   - apk 不能用 `list-installed`（那是 opkg 语法）→ 改为 `apk info -e <pkg>` 优先、`opkg list-installed` 兜底；
+   - DNS 只 grep "包含 127.0.0.1#5335" → 改为「上游**恰好 1 条**且等于该值」+ `resolvfile=/dev/null` + 实际监听 UDP/TCP 5335 + 直连 5335 解析成功 + 无 MosDNS/SmartDNS/AdGuardHome 并行抢答；
+   - 去掉一批「管道成功即通过」的假阳性（dmesg NSS、bpffs、无线 disabled 的判断都改成取文本再比较）；
+   - 新增 5 项断言：`qf-dns-guard` 已启用、rc.local 无死代码、`luci.themes` section 类型为 `internal`、root 密码哈希非空且未被清空、`network.wan6` 已移除。
+6. **构建期新增静态闸门**（`scripts/02-custom-settings.sh` 第 9 段）：`files/` 下所有带 shebang 的脚本必须 `sh -n` 通过；
+   断言 DNS 守卫是独立 init 服务、`files/` 里不许再出现写 rc.local 的死代码守卫。语法错误再也不会被带进固件。
+
+### 当前状态（2026-10-29 复审后）
+- 已发布的 `latest-qf`（run 40811758474 产物）**不含**上述修复，仍在 Release 上有效可刷；
+  下一次完整构建后 Release 会自动替换为修复版（新时间戳产物上传、旧产物被清理）。
+
 

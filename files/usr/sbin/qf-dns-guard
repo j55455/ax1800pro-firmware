@@ -1,0 +1,47 @@
+#!/bin/sh
+# ==============================================================================
+# qf-dns-guard —— DNS 单入口故障守卫（一次性执行，由 /etc/init.d/qf-dns-guard 启动）
+#
+# 为什么不写 rc.local：
+#   stock OpenWrt 的 /etc/rc.local 自带 `exit 0`，任何"追加"到末尾的内容都不会执行。
+#   旧版本把守卫 heredoc 追加到 rc.local，等于死代码 —— 已废弃，改为独立 init 服务。
+#
+# 行为：
+#   开机 60s 后确认 oxidns 存活；不存活先尝试拉起一次；仍失败才放开单入口，
+#   换公共上游保证能上网，并在 /tmp/.qf-dns-fallback 留标记（verify-live.sh 会检查）。
+# ==============================================================================
+
+sleep 60
+
+LOG="logger -t qf-oxidns"
+
+alive() {
+	pgrep -f '/usr/bin/oxidns start' >/dev/null 2>&1
+}
+
+if alive; then
+	$LOG "guard: oxidns alive, single-entry DNS healthy"
+	exit 0
+fi
+
+# 可能只是启动竞态，先自己拉一次再判
+$LOG "guard: oxidns not running, trying to start once"
+[ -x /etc/init.d/oxidns ] && /etc/init.d/oxidns start >/dev/null 2>&1
+sleep 5
+
+if alive; then
+	$LOG "guard: oxidns recovered after manual start"
+	exit 0
+fi
+
+# 兜底：放弃单入口，换公共上游，至少保证能解析
+$LOG "guard: oxidns still dead -> fallback to public upstreams (single-entry disabled)"
+uci -q delete dhcp.@dnsmasq[0].server 2>/dev/null || true
+uci -q set dhcp.@dnsmasq[0].noresolv='0'
+uci -q set dhcp.@dnsmasq[0].resolvfile='/tmp/resolv.conf.d/resolv.conf.auto'
+uci -q add_list dhcp.@dnsmasq[0].server='223.5.5.5'
+uci -q add_list dhcp.@dnsmasq[0].server='119.29.29.29'
+uci -q commit dhcp
+echo "fallback $(date -Iseconds 2>/dev/null || date)" > /tmp/.qf-dns-fallback
+/etc/init.d/dnsmasq restart >/dev/null 2>&1
+exit 0

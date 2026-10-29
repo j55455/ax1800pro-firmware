@@ -277,7 +277,30 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cd "$WRT_DIR"
-          gh release create latest-qf --title "AX1800Pro 最新构建 (rolling)" \
-            --notes "基于 LiBwrt/LibWrt ${REPO_BRANCH} @ ${WRT_HASH}，Linux ${KERNEL_VERSION}，构建于 ${BUILD_DAY}" \
-            upload/* || gh release upload latest-qf upload/* --clobber
+          set -uo pipefail
+          # 注意：绝不能 cd 进 $WRT_DIR 再调 gh —— 那是 LibWrt 的克隆，gh 会从该目录的
+          # git remote 推断仓库为 LiBwrt/LibWrt（上游无写权限 -> 403）。
+          # 这里所有 gh 调用都显式 -R "$REPO"，与自己仓库绑定。
+          echo "[INFO] publish target: $REPO (tag latest-qf)"
+          # 产物目录在源码树里（artifact path = ${{ env.WRT_DIR }}/upload），不要 cd 进源码树调 gh
+          UPLOAD_DIR="$WRT_DIR/upload"
+          KEEP=$(cd "$UPLOAD_DIR" && ls -1 | tr '\n' ' ')
+          echo "[INFO] built assets: $KEEP"
+          if gh release view latest-qf -R "$REPO" >/dev/null 2>&1; then
+            echo "[INFO] release exists, pruning stale assets then uploading"
+            gh release view latest-qf -R "$REPO" --json assets -q '.assets[].name' | while read -r a; do
+              [ -z "$a" ] && continue
+              case " $KEEP " in
+                *" $a "*) echo "[INFO] keep $a" ;;
+                *) gh release delete-asset latest-qf "$a" -R "$REPO" -y && echo "[INFO] pruned stale $a" ;;
+              esac
+            done
+            gh release upload latest-qf -R "$REPO" "$UPLOAD_DIR"/* --clobber
+          else
+            gh release create latest-qf -R "$REPO" \
+              --title "AX1800Pro latest rolling build" \
+              --notes "base LiBwrt/LibWrt ${REPO_BRANCH} @ ${WRT_HASH}; Linux ${KERNEL_VERSION}; built ${BUILD_DAY}; run ${GITHUB_RUN_ID}" \
+              "$UPLOAD_DIR"/*
+          fi
+          echo "[INFO] final release state:"
+          gh release view latest-qf -R "$REPO"

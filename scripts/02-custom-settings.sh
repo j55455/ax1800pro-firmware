@@ -302,6 +302,31 @@ for pair in $QF_MENU_APPS; do
     done
 done
 
+# 09. 自注入脚本的静态闸门（防止把语法错/死代码带进固件，刷完才发现）
+#     (a) 所有 files/ 下带 shebang 的脚本必须 `sh -n` 通过
+#     (b) DNS 兜底必须是独立 init 服务（rc.local 里追加在 exit 0 之后的内容不会执行）
+QF_BAD_SYNTAX=0
+for f in $(find ./files/etc/init.d ./files/etc/uci-defaults ./files/etc/hotplug.d ./files/usr/bin ./files/usr/sbin -type f 2>/dev/null); do
+    head -1 "$f" | grep -q '^#!' || continue
+    if ! sh -n "$f" 2>/tmp/qf-shn.err; then
+        echo "[FAIL] shell 语法错误: $f" >&2
+        cat /tmp/qf-shn.err >&2
+        QF_BAD_SYNTAX=$((QF_BAD_SYNTAX+1))
+    fi
+done
+if [ "$QF_BAD_SYNTAX" -ne 0 ]; then
+    echo "=== [02-custom-settings.sh] 注入脚本存在 $QF_BAD_SYNTAX 处语法错误, 中止构建 ===" >&2
+    exit 1
+fi
+echo "[INFO] 注入脚本 shell 语法检查全部通过"
+qf_hard "./files/etc/init.d/qf-dns-guard" "USE_PROCD=1" "DNS 守卫是独立 init 服务"
+qf_hard "./files/usr/sbin/qf-dns-guard" "qf-dns-fallback" "DNS 守卫兜底逻辑就位"
+if grep -rq 'qf-oxidns-guard' ./files/ 2>/dev/null; then
+    echo "[FAIL] files/ 中仍存在写入 rc.local 的死代码守卫（exit 0 之后不执行）" >&2
+    exit 1
+fi
+echo "[INFO] DNS 守卫不再写入 rc.local"
+
 # 10. 最终补丁生效闸门：关键项失败即中止，杜绝静默失效产出错误固件
 if [ "$QF_FAIL" -ne 0 ]; then
     echo "=== [02-custom-settings.sh] 关键补丁未全部生效, 中止构建 ===" >&2

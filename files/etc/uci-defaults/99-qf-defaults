@@ -88,6 +88,9 @@ uci -q commit system
 # 彻底清空其他主题注册项，仅保留 KuCat，根除多主题下拉与快速切换引发的前端缓存错乱 Bug
 if [ -d /www/luci-static/kucat ]; then
 	uci -q delete luci.themes 2>/dev/null || true
+	# 删除后必须显式重建 section（stock 为 `config internal 'themes'`），
+	# 直接在已删除的 section 上写选项会留下无类型的空配置
+	uci -q set luci.themes='internal'
 	uci -q set luci.themes.KuCat='/luci-static/kucat'
 	uci -q set luci.main.mediaurlbase='/luci-static/kucat'
 	uci -q commit luci
@@ -193,7 +196,12 @@ uci -q set dropbear.@dropbear[0].RootPasswordAuth='on'
 uci -q commit dropbear
 # 16. root 密码统一为 password：与现网 QWRT 一致，换固件后原有 ssh/sshpass 习惯与脚本无需改动
 #     （仅 LAN 内可达；如需改密请登录 LuCI 或 passwd 命令）
-printf 'root:password\n' | chpasswd 2>/dev/null || passwd -d root 2>/dev/null || true
+#     失败时绝不降级为空密码：只留痕，保留镜像默认状态
+if printf 'root:password\n' | chpasswd 2>/dev/null; then
+	logger -t qf-defaults "root password set"
+else
+	logger -t qf-defaults "WARNING: chpasswd failed, root password left as image default (NOT cleared)"
+fi
 
 # 17. 软件源纯化（去重 + 剔除失效分类源，消除 apk 报错与警告）
 [ -x /usr/bin/qf-fix-apk-repos ] && /usr/bin/qf-fix-apk-repos >/dev/null 2>&1 || true
