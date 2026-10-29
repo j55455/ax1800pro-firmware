@@ -227,23 +227,24 @@ jobs:
             done
             echo "OK:   config-default 含 BTF + TC eBPF 符号"
           fi
-          #    (b) 以 vmlinux 的 .BTF 段为准：CO-RE 能否工作的最终硬证据
-          KVML=$(find build_dir -maxdepth 6 -type f -name vmlinux -path "*linux-qualcommax_ipq60xx*" 2>/dev/null | head -n 1)
+          #    (b) 以 ELF vmlinux 的 .BTF 段为准：CO-RE 能否工作的最终硬证据
+          #        注意：build_dir/.../linux-qualcommax_ipq60xx/vmlinux 是 FIT 用的裸 Image（非 ELF），
+          #        真正带 .BTF 的 ELF 在 LINUX_DIR 里（.../linux-qualcommax_ipq60xx/linux-6.12.x/vmlinux）。
+          KVML=""
+          for cand in $(find build_dir -maxdepth 7 -type f -name vmlinux -path "*linux-qualcommax_ipq60xx*" 2>/dev/null); do
+            if [ "$(head -c 4 "$cand" | od -An -tx1 | tr -d ' \n')" = "7f454c46" ]; then KVML="$cand"; break; fi
+          done
           if [ -n "$KVML" ]; then
-            echo "kernel vmlinux: $KVML ($(stat -c%s "$KVML") bytes)"
-            if command -v readelf >/dev/null 2>&1; then
-              if readelf -S "$KVML" | grep -q "\.BTF"; then
-                echo "OK:   vmlinux 含 .BTF 段"
-              else
-                echo "ERROR: vmlinux 缺少 .BTF 段（honk/CO-RE 无法运行）"
-                readelf -S "$KVML" | grep -iE "debug|btf" | head -n 10 || true
-                exit 1
-              fi
+            echo "kernel vmlinux (ELF): $KVML ($(stat -c%s "$KVML") bytes)"
+            if readelf -S "$KVML" | grep -q "\.BTF"; then
+              echo "OK:   vmlinux 含 .BTF 段"
             else
-              echo "WARN: 无 readelf，跳过 .BTF 段校验"
+              echo "ERROR: vmlinux 缺少 .BTF 段（honk/CO-RE 无法运行）"
+              readelf -S "$KVML" | grep -iE "debug|btf" | head -n 10 || true
+              exit 1
             fi
           else
-            echo "WARN: 未找到 vmlinux，跳过 .BTF 段校验"
+            echo "ERROR: 未找到 ELF 格式的 vmlinux（无法校验 .BTF）"; exit 1
           fi
 
           echo "===== 编译产物闸门校验通过 ====="
