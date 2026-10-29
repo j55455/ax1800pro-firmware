@@ -39,3 +39,16 @@
 - honk 是否要求内核 ≥ 某版本特性（如 `BTF_KIND_DECL_TAG`、`bpf_loop`）；IPQ6000 是 arm64，不支持 x86 特有的 kfunc。
 - 亚瑟的 NSS 硬件加速与 honk 的 TC 钩子能否共存（NSS 会绕过部分 netfilter/TC 路径）。若发现 honk 分流不生效而直连正常，优先怀疑 NSS offload 抢走了包。
 - honk 的 map 内存占用在 1G 机器上是否需要调小（如 `bpf_map_size` 类参数）。
+
+## 5. 已实证：固件内核确实带 BTF（2026-10-29）
+
+不只是“配置里写了 y”，而是从**已构建的固件字节里直接验证到 BTF**：
+
+1. `sysupgrade.bin` 实为 tar，内含 `sysupgrade-jdcloud_re-ss-01/kernel`（7,403,092 字节，ARM64 FIT，magic `d00dfeed`）。
+2. FIT 内 kernel 载荷从偏移 236 开始是 **gzip**（`1f 8b 08`）；gunzip 后得到 `Image` 19,775,496 字节，`0x38` 处 magic = `0x644d5241`（`ARMd`，arm64 boot Image）。
+3. 在 `Image` 偏移 **13,450,908** 处扫描到 BTF 头：magic `0xEB9F`、`hdr_len=24`、`type_len=2,174,232`、`str_len=1,540,698`，紧跟的字符串表以标准类型名开头（`long unsigned int` / `char` / `__s8` …）。
+4. 对比：无 BTF 时的 factory/sysupgrade 大小为 66.3M / 61.4M；开启后为 69.5M / 64.4M（+~3MB），与 `.BTF` 体积一致。
+
+刷机后的等价自查：`ls -l /sys/kernel/btf/vmlinux`（BTF 存在则不是 0 字节）、`zcat /proc/config.gz | grep DEBUG_INFO_BTF`。
+
+> 构建期排坑记录（已写入 workflow）：`build_dir/.../linux-qualcommax_ipq60xx/vmlinux` 实际是**裸 Image**（非 ELF，readelf 会报 `wrong magic bytes`）；带 `.BTF` 的 ELF 在 `.../linux-qualcommax_ipq60xx/linux-6.12.x/vmlinux`。要校 .BTF 必须先按 ELF magic（`7f454c46`）筛候选。
